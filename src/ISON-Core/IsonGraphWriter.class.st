@@ -151,8 +151,7 @@ IsonGraphWriter >> documentFor: anObject [
 { #category : 'accessing' }
 IsonGraphWriter >> edgeRowSchema [
 	"The edge-row contract this writer recognizes (IsonGraphEdgeRowSchema). Defaults to the neutral
-	 source/target/edgeType contract; a producer with different row keys (e.g. SMT-ISON) sets its own."
-
+	 source/target/edgeType contract; a producer with different row keys sets its own."
 	^ edgeRowSchema ifNil: [
 		  edgeRowSchema := IsonGraphEdgeRowSchema default ]
 ]
