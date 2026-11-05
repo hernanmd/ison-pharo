@@ -1,3 +1,10 @@
+"
+Parses ISON text back to the equivalent normalized object (the inverse of IsonGraphWriter). 
+
+Entry point: `read:` answers the Dictionary / Array / scalar an ISON document encodes.
+
+Recognizes the block structure (meta.result, flattened dotted columns, list/tab/obj child blocks, the interned file table, and the nodes.<Kind> / edges.<edgeType> graph layout) and rebuilds reference rows according to its `edgeRowSchema:` (which must match the schema the document was written with; defaults to the neutral contract). A truncated document (a child block whose row count disagrees with its parent's count cell) raises an error rather than returning a partial result.
+"
 Class {
 	#name : 'IsonGraphReader',
 	#superclass : 'Object',
@@ -6,7 +13,8 @@ Class {
 		'blockIndex',
 		'files',
 		'wrapped',
-		'decodedCache'
+		'decodedCache',
+		'edgeRowSchema'
 	],
 	#category : 'ISON-Core',
 	#package : 'ISON-Core'
@@ -25,7 +33,7 @@ IsonGraphReader >> childRowsOf: aBlockName parent: aRowIndex count: aCount [
 				                    at: aBlockName
 				                    ifAbsent: [
 				                    self error:
-					                    'IR-ISON: missing block ' , aBlockName ].
+					                    'ISON: missing block ' , aBlockName ].
 			           g := Dictionary new.
 			           (self
 				            decodeBlock: block
@@ -40,7 +48,7 @@ IsonGraphReader >> childRowsOf: aBlockName parent: aRowIndex count: aCount [
 		        ifAbsent: [ grouped at: #all ifAbsent: [ #(  ) ] ].
 	rows size = aCount ifFalse: [
 			self error:
-				'IR-ISON: ' , aBlockName , ' has ' , rows size printString
+				'ISON: ' , aBlockName , ' has ' , rows size printString
 				, ' rows for parent ' , aRowIndex printString , ', expected '
 				, aCount printString ].
 	^ rows
@@ -114,6 +122,21 @@ IsonGraphReader >> decodeCell: aValue hint: aHint name: aName path: aPath rowInd
 	^ aValue
 ]
 
+{ #category : 'accessing' }
+IsonGraphReader >> edgeRowSchema [
+	"The edge-row contract used to rebuild reference rows (IsonGraphEdgeRowSchema). Must match the schema
+	 the document was written with. Defaults to the neutral source/target/edgeType contract."
+
+	^ edgeRowSchema ifNil: [
+		  edgeRowSchema := IsonGraphEdgeRowSchema default ]
+]
+
+{ #category : 'accessing' }
+IsonGraphReader >> edgeRowSchema: aSchema [
+
+	edgeRowSchema := aSchema
+]
+
 { #category : 'reading' }
 IsonGraphReader >> graphNodeRows [
 	"Every nodes.<Kind> row as a dictionary with `kind` restored and its id graph-decoded."
@@ -139,17 +162,20 @@ IsonGraphReader >> graphNodeRowsCount: aCount [
 	rows := self graphNodeRows.
 	rows size = aCount ifFalse: [
 			self error:
-				'IR-ISON: node rows ' , rows size printString , ' expected '
+				'ISON: node rows ' , rows size printString , ' expected '
 				, aCount printString ].
 	^ rows asArray
 ]
 
 { #category : 'reading' }
 IsonGraphReader >> graphReferenceRowsCount: aCount families: aFamilyArray [
-	"Rebuild reference rows from edges.<edgeType> blocks; endpoint attributes named by the families
-	 (e.g. toName, fromCitation) come back from the endpoint's nodes.<Kind> row."
+	"Rebuild reference rows from edges.<edgeType> blocks into the edgeRowSchema's key shape. Endpoint
+	 attributes named by the families come back from the endpoint's nodes.<Kind> row. The family key
+	 names are the schema's (produced by the writer from the same schema), so no producer-specific key
+	 names are hardcoded here."
 
-	| endpoints rows |
+	| schema endpoints rows |
+	schema := self edgeRowSchema.
 	endpoints := Dictionary new.
 	self graphNodeRows do: [ :d |
 			endpoints
@@ -165,31 +191,39 @@ IsonGraphReader >> graphReferenceRowsCount: aCount families: aFamilyArray [
 							d := assoc value.
 							source := d removeKey: 'source' ifAbsent: [ nil ].
 							target := d removeKey: 'target' ifAbsent: [ nil ].
-							d at: 'edgeType' put: b name.
+							d at: schema edgeTypeKey put: b name.
 							source ifNotNil: [
-									d at: 'fromId' put: (IsonGraphCodec decodeGraphId: source id).
-									source kind ifNotNil: [ :k | d at: 'fromKind' put: k ] ].
+									d
+										at: (schema idKeyForRole: 'from')
+										put: (IsonGraphCodec decodeGraphId: source id).
+									source kind ifNotNil: [ :k |
+										d at: (schema kindKeyForRole: 'from') put: k ] ].
 							target ifNotNil: [
-									d at: 'toId' put: (IsonGraphCodec decodeGraphId: target id).
-									target kind ifNotNil: [ :k | d at: 'toKind' put: k ] ].
+									d
+										at: (schema idKeyForRole: 'to')
+										put: (IsonGraphCodec decodeGraphId: target id).
+									target kind ifNotNil: [ :k |
+										d at: (schema kindKeyForRole: 'to') put: k ] ].
 							aFamilyArray do: [ :family |
 									| role node attr |
-									role := (family beginsWith: 'from')
-										        ifTrue: [ 'from' ]
-										        ifFalse: [ 'to' ].
-									node := endpoints
-										        at: {
-												        (d at: role , 'Kind' ifAbsent: [ nil ]).
-												        (d at: role , 'Id' ifAbsent: [ nil ]) }
-										        ifAbsent: [ nil ].
-									attr := family allButFirst: role size.
-									attr := attr first asLowercase asString , attr allButFirst.
-									(node ifNotNil: [ node at: attr ifAbsent: [ nil ] ])
-										ifNotNil: [ :v | d at: family put: v ] ].
+									role := schema familyRoleOf: family.
+									role ifNotNil: [
+											attr := schema attributeOf: family.
+											node := endpoints
+												        at: {
+														        (d
+															         at: (schema kindKeyForRole: role)
+															         ifAbsent: [ nil ]).
+														        (d
+															         at: (schema idKeyForRole: role)
+															         ifAbsent: [ nil ]) }
+												        ifAbsent: [ nil ].
+											(node ifNotNil: [ node at: attr ifAbsent: [ nil ] ])
+												ifNotNil: [ :v | d at: family put: v ] ] ].
 							rows add: d ] ] ].
 	rows size = aCount ifFalse: [
 			self error:
-				'IR-ISON: reference rows ' , rows size printString , ' expected '
+				'ISON: reference rows ' , rows size printString , ' expected '
 				, aCount printString ].
 	^ rows asArray
 ]
@@ -222,7 +256,7 @@ IsonGraphReader >> infer: aToken quoted: aBoolean [
 { #category : 'parsing' }
 IsonGraphReader >> parse: aString [
 	"Split the document into blocks (kind.name / field line / rows until a blank line). Comments (#)
-	 are skipped; the `# ir-ison 1 [wrapped]` marker is honoured."
+	 are skipped; the `# ison1 [wrapped]` marker is honoured."
 
 	| lines i |
 	lines := aString lines.
@@ -232,13 +266,13 @@ IsonGraphReader >> parse: aString [
 			line := (lines at: i) trimBoth.
 			(line isEmpty or: [ line first = $# ])
 				ifTrue: [
-						(line beginsWith: '# ir-ison') ifTrue: [
+						(line beginsWith: '# ison') ifTrue: [
 							wrapped := wrapped or: [ line substrings includes: 'wrapped' ] ].
 						i := i + 1 ]
 				ifFalse: [
 						| kind name fieldTokens fields hints block |
 						(line includes: $.) ifFalse: [
-							self error: 'IR-ISON: invalid block header ' , line ].
+							self error: 'ISON: invalid block header ' , line ].
 						kind := line copyUpTo: $..
 						name := line copyAfter: $..
 						i := i + 1.
@@ -248,7 +282,7 @@ IsonGraphReader >> parse: aString [
 										(lines at: i) trimBoth first = $# ] ] ] whileTrue: [
 							i := i + 1 ].
 						i > lines size ifTrue: [
-							self error: 'IR-ISON: block ' , line , ' has no field line' ].
+							self error: 'ISON: block ' , line , ' has no field line' ].
 						fieldTokens := (self rawTokensOf: (lines at: i)) collect: [ :a |
 							               a key ].
 						fields := fieldTokens collect: [ :t |
@@ -331,7 +365,7 @@ IsonGraphReader >> rawTokensOf: aLine [
 												ifTrue: [
 														pos := pos + 1.
 														pos > size ifTrue: [
-															self error: 'IR-ISON: dangling escape' ].
+															self error: 'ISON: dangling escape' ].
 														c := aLine at: pos.
 														out nextPut: (c = $n
 																 ifTrue: [ Character lf ]
@@ -345,7 +379,7 @@ IsonGraphReader >> rawTokensOf: aLine [
 												ifFalse: [ out nextPut: c ] ].
 								pos := pos + 1 ].
 						closed ifFalse: [
-							self error: 'IR-ISON: unterminated quoted string' ].
+							self error: 'ISON: unterminated quoted string' ].
 						tokens add: out contents -> true ]
 				ifFalse: [
 						| start |
@@ -361,8 +395,8 @@ IsonGraphReader >> rawTokensOf: aLine [
 
 { #category : 'reading' }
 IsonGraphReader >> read: aString [
-	"Answer the normalized JSON-shaped object an IR-ISON document encodes (inverse of
-	 SmtIRIsonWriter>>documentFor:, up to SmtIRIsonCodec equivalence)."
+	"Answer the normalized JSON-shaped object an ISON document encodes (inverse of
+	 IsonGraphWriter>>documentFor:, up to IsonGraphCodec equivalence)."
 
 	| meta root |
 	blocks := OrderedCollection new.
@@ -377,7 +411,7 @@ IsonGraphReader >> read: aString [
 	meta := blockIndex
 		        at: 'meta.result'
 		        ifAbsent: [
-		        self error: 'IR-ISON: missing meta.result block' ].
+		        self error: 'ISON: missing meta.result block' ].
 	root := (self decodeBlock: meta path: 'result') first value.
 	^ wrapped
 		  ifTrue: [ root at: 'value' ifAbsent: [ nil ] ]

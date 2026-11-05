@@ -1,3 +1,14 @@
+"
+Serializes a JSON-shaped value (Dictionary / Array / scalar) to ISON text: a set of newline-delimited, columnar blocks whose column headers are written once and shared by every row beneath them. Produces canonical, deterministic output (sorted blocks, rows and columns) so the same logical value always yields the same bytes.
+
+Entry point: `documentFor:` answers the ISON String for an object.
+
+Options:
+- `strictGraphIds:` (default false) controls node-id percent-encoding. Readable mode escapes only whitespace, control characters and '%'; strict mode also escapes ':', '|', '""' and backslash so ids load into strict reference-graph readers.
+- `edgeRowSchema:` supplies the IsonGraphEdgeRowSchema naming which row keys identify an edge's endpoints and type; defaults to the neutral source/target/edgeType contract.
+
+A top-level value that is not a Dictionary is wrapped (the marker line carries ' wrapped') so arrays and scalars round-trip. The inverse is IsonGraphReader.
+"
 Class {
 	#name : 'IsonGraphWriter',
 	#superclass : 'Object',
@@ -8,7 +19,8 @@ Class {
 		'nodesKey',
 		'refsKey',
 		'wrapped',
-		'strictGraphIds'
+		'strictGraphIds',
+		'edgeRowSchema'
 	],
 	#category : 'ISON-Core',
 	#package : 'ISON-Core'
@@ -109,8 +121,8 @@ IsonGraphWriter >> columnsForKey: aKey rows: rows path: aPath allowGraph: aBoole
 
 { #category : 'writing' }
 IsonGraphWriter >> documentFor: anObject [
-	"Answer the IR-ISON text for a JSON-shaped result (Dictionary / Array / scalar). Deterministic: the
-	 same normalized input always yields the same bytes. Lossless under SmtIRIsonCodec class>>normalize:."
+	"Answer the ISON text for a JSON-shaped result (Dictionary / Array / scalar). Deterministic: the
+	 same normalized input always yields the same bytes. Lossless under IsonGraphCodec class>>normalize:."
 
 	| normalized root |
 	normalized := IsonGraphCodec normalize: anObject.
@@ -134,6 +146,21 @@ IsonGraphWriter >> documentFor: anObject [
 		parents: nil
 		allowGraph: true.
 	^ self render
+]
+
+{ #category : 'accessing' }
+IsonGraphWriter >> edgeRowSchema [
+	"The edge-row contract this writer recognizes (IsonGraphEdgeRowSchema). Defaults to the neutral
+	 source/target/edgeType contract; a producer with different row keys (e.g. SMT-ISON) sets its own."
+
+	^ edgeRowSchema ifNil: [
+		  edgeRowSchema := IsonGraphEdgeRowSchema default ]
+]
+
+{ #category : 'accessing' }
+IsonGraphWriter >> edgeRowSchema: aSchema [
+
+	edgeRowSchema := aSchema
 ]
 
 { #category : 'graph layout' }
@@ -168,42 +195,35 @@ IsonGraphWriter >> encodeNodeRows: rows [
 
 { #category : 'graph layout' }
 IsonGraphWriter >> encodeReferenceRows: rows [
-	"ISONGraph layout for reference rows. Endpoint attributes (`fromX` / `toX`, e.g. toName, fromCitation,
-	 toCitation) move onto ONE nodes.<Kind> row per endpoint - written once instead of once per edge -
-	 when they are consistent per node; edges.<edgeType> rows keep `source target` as :Kind:id and any
-	 other key. Answers the parent-column hint `refs[+family...]` the reader needs to rebuild the rows."
+	"ISONGraph layout for reference rows, per the edgeRowSchema. Endpoint attributes (the schema's
+	 from/to families, e.g. targetName, sourceCitation) move onto ONE nodes.<Kind> row per endpoint -
+	 written once instead of once per edge - when they are consistent per node; edges.<edgeType> rows keep
+	 source/target as :Kind:id and any other key. Answers the parent-column hint `refs[+family...]` the
+	 reader needs to rebuild the rows. No producer-specific key names appear here; they come from schema."
 
-	| structural families fromFamilies toFamilies attrsByNode consistent nodeRows byType emitEndpoints |
-	"When the document already carries its own node table (nodes.<Kind> from another key), the edges
-	 reference those rows and endpoint attributes stay on the edge rows."
+	| schema structural families attrsByNode consistent nodeRows byType emitEndpoints |
+	schema := self edgeRowSchema.
 	emitEndpoints := nodesKey isNil.
-	structural := #( 'fromId' 'fromKind' 'toId' 'toKind' 'edgeType' ).
+	structural := schema structuralKeys.
 	families := Set new.
 	rows do: [ :r |
 			r keysDo: [ :k |
-					((structural includes: k) not and: [
-						 (self endpointRoleOf: k) notNil ]) ifTrue: [ families add: k ] ] ].
-	fromFamilies := families select: [ :f |
-		                (self endpointRoleOf: f) = 'from' ].
-	toFamilies := families select: [ :f |
-		              (self endpointRoleOf: f) = 'to' ].
+				(schema familyRoleOf: k) ifNotNil: [ families add: k ] ] ].
 	attrsByNode := Dictionary new.
 	consistent := true.
 	rows do: [ :r |
-			{
-				(fromFamilies -> {
-					 (r at: 'fromKind').
-					 (r at: 'fromId') }).
-				(toFamilies -> {
-					 (r at: 'toKind').
-					 (r at: 'toId') }) } do: [ :spec |
-					| attrs |
-					attrs := attrsByNode
-						         at: spec value
-						         ifAbsentPut: [ Dictionary new ].
-					spec key do: [ :f |
+			#( 'from' 'to' ) do: [ :role |
+					| nodeKey attrs |
+					nodeKey := {
+						           (r
+							            at: (schema kindKeyForRole: role)
+							            ifAbsent: [ nil ]).
+						           (r at: (schema idKeyForRole: role) ifAbsent: [ nil ]) }.
+					attrs := attrsByNode at: nodeKey ifAbsentPut: [ Dictionary new ].
+					(families select: [ :f | (schema familyRoleOf: f) = role ]) do: [
+							:f |
 							| a v |
-							a := self endpointAttributeOf: f.
+							a := schema attributeOf: f.
 							v := r at: f ifAbsent: [ nil ].
 							(attrs includesKey: a)
 								ifTrue: [
@@ -226,7 +246,7 @@ IsonGraphWriter >> encodeReferenceRows: rows [
 	byType := Dictionary new.
 	rows do: [ :r |
 			(byType
-				 at: (r at: 'edgeType')
+				 at: (r at: schema edgeTypeKey)
 				 ifAbsentPut: [ OrderedCollection new ]) add: r ].
 	byType keys asSortedCollection do: [ :type |
 			| converted |
@@ -234,18 +254,17 @@ IsonGraphWriter >> encodeReferenceRows: rows [
 					             | d |
 					             d := Dictionary new.
 					             d at: 'source' put: (IsonGraphReference new
-							              setKind: (r at: 'fromKind')
+							              setKind: (r at: (schema kindKeyForRole: 'from'))
 							              id: (IsonGraphCodec
-									               encodeGraphId: (r at: 'fromId')
+									               encodeGraphId:
+									               (r at: (schema idKeyForRole: 'from'))
 									               strict: self strictGraphIds)).
-					             d
-						             at: 'target'
-						             put:
-							             (IsonGraphReference new
-								              setKind: (r at: 'toKind')
-								              id: (IsonGraphCodec
-										               encodeGraphId: (r at: 'toId')
-										               strict: self strictGraphIds)).
+					             d at: 'target' put: (IsonGraphReference new
+							              setKind: (r at: (schema kindKeyForRole: 'to'))
+							              id: (IsonGraphCodec
+									               encodeGraphId:
+									               (r at: (schema idKeyForRole: 'to'))
+									               strict: self strictGraphIds)).
 					             r keysAndValuesDo: [ :k :v |
 							             ((structural includes: k) or: [
 								              families includes: k ]) ifFalse: [
@@ -317,30 +336,6 @@ IsonGraphWriter >> encodeRows: rows kind: aKind name: aName path: aPath parents:
 					 cells: (Array new: rows size)) ].
 	block columns: columns rowCount: rows size.
 	^ block
-]
-
-{ #category : 'graph layout' }
-IsonGraphWriter >> endpointAttributeOf: aKey [
-	"fromCitation -> citation, toName -> name."
-
-	| rest |
-	rest := (self endpointRoleOf: aKey) = 'from'
-		        ifTrue: [ aKey allButFirst: 4 ]
-		        ifFalse: [ aKey allButFirst: 2 ].
-	^ rest first asLowercase asString , rest allButFirst
-]
-
-{ #category : 'graph layout' }
-IsonGraphWriter >> endpointRoleOf: aKey [
-	"`fromX` -> 'from', `toX` -> 'to' (X capitalised), else nil."
-
-	(aKey size > 4 and: [
-		 (aKey beginsWith: 'from') and: [ (aKey at: 5) isUppercase ] ])
-		ifTrue: [ ^ 'from' ].
-	(aKey size > 2 and: [
-		 (aKey beginsWith: 'to') and: [ (aKey at: 3) isUppercase ] ])
-		ifTrue: [ ^ 'to' ].
-	^ nil
 ]
 
 { #category : 'encoding' }
@@ -422,38 +417,44 @@ IsonGraphWriter >> isNodeRowSet: rows [
 
 { #category : 'graph layout' }
 IsonGraphWriter >> isReferenceId: anObject [
-	"Any non-empty string: graph-block ids are percent-encoded (SmtIRIsonCodec class>>encodeGraphId:)."
+	"Any non-empty string: graph-block ids are percent-encoded (IsonGraphCodec class>>encodeGraphId:strict:)."
 
 	^ anObject isString and: [ anObject notEmpty ]
 ]
 
 { #category : 'graph layout' }
 IsonGraphWriter >> isReferenceRowSet: rows [
-	"Reference rows (fromId/fromKind/edgeType/toId/toKind) writable as ISONGraph edges: identifier kinds
-	 and type, ids writable as unquoted `:Kind:id` (no whitespace), unique (type, source, target)."
+	"Rows writable as ISONGraph edges under the edgeRowSchema: id keys are unquoted-:Kind:id-writable,
+	 kind + edgeType keys are identifiers, unique (type, source, target), no nested arrays."
 
-	| seen |
+	| schema seen |
+	schema := self edgeRowSchema.
 	seen := Set new.
 	^ rows allSatisfy: [ :r |
 			  | key |
-			  ((self isReferenceId: (r at: 'fromId' ifAbsent: [ nil ])) and: [
-					   (self isReferenceId: (r at: 'toId' ifAbsent: [ nil ])) and: [
+			  ((self isReferenceId:
+				    (r at: (schema idKeyForRole: 'from') ifAbsent: [ nil ])) and: [
+					   (self isReferenceId:
+						    (r at: (schema idKeyForRole: 'to') ifAbsent: [ nil ])) and: [
 							   (IsonGraphCodec isIdentifier:
-								    (r at: 'edgeType' ifAbsent: [ nil ])) and: [
+								    (r at: schema edgeTypeKey ifAbsent: [ nil ])) and: [
 									   (IsonGraphCodec isIdentifier:
-										    (r at: 'fromKind' ifAbsent: [ nil ])) and: [
-											   (IsonGraphCodec isIdentifier:
-												    (r at: 'toKind' ifAbsent: [ nil ])) and: [
-												   self hasNoArrays: r ] ] ] ] ]) and: [
-					  key := {
-						         (r at: 'edgeType').
-						         (r at: 'fromKind').
-						         (r at: 'fromId').
-						         (r at: 'toKind').
-						         (r at: 'toId') }.
-					  (seen includes: key) not and: [
-							  seen add: key.
-							  true ] ] ]
+										    (r at: (schema kindKeyForRole: 'from') ifAbsent: [ nil ]))
+										   and: [
+												   (IsonGraphCodec isIdentifier:
+													    (r
+														     at: (schema kindKeyForRole: 'to')
+														     ifAbsent: [ nil ])) and: [ self hasNoArrays: r ] ] ] ] ])
+				  and: [
+						  key := {
+							         (r at: schema edgeTypeKey).
+							         (r at: (schema kindKeyForRole: 'from')).
+							         (r at: (schema idKeyForRole: 'from')).
+							         (r at: (schema kindKeyForRole: 'to')).
+							         (r at: (schema idKeyForRole: 'to')) }.
+						  (seen includes: key) not and: [
+								  seen add: key.
+								  true ] ] ]
 ]
 
 { #category : 'encoding' }
@@ -548,7 +549,7 @@ IsonGraphWriter >> render [
 					 yourself) ].
 	ordered addAll: blocks allButFirst.
 	^ String streamContents: [ :s |
-			  s nextPutAll: '# ir-ison 1'.
+			  s nextPutAll: '# ison1'.
 			  wrapped ifTrue: [ s nextPutAll: ' wrapped' ].
 			  s nextPut: Character lf.
 			  ordered

@@ -7,7 +7,7 @@ Class {
 
 { #category : 'helpers' }
 IsonGraphTest >> assertRoundTrip: anObject [
-	"Write, read back, and compare under the IR-ISON equivalence; answer the document."
+	"Write, read back, and compare under the ISON equivalence; answer the document."
 
 	| text back |
 	text := IsonGraphWriter new documentFor: anObject.
@@ -19,17 +19,19 @@ IsonGraphTest >> assertRoundTrip: anObject [
 ]
 
 { #category : 'helpers' }
-IsonGraphTest >> referenceRow: from kind: fromKind type: type to: to kind: toKind name: toName line: aLine [
+IsonGraphTest >> referenceRow: from kind: fromKind type: type to: to kind: toKind name: targetName line: aLine [
+	"A reference row in IsonGraph's NEUTRAL edge-row contract (source/target, sourceKind/targetKind,
+	 edgeType, target<Attr>). No producer-specific key names."
 
 	^ Dictionary new
-		  at: 'fromId' put: from;
-		  at: 'fromKind' put: fromKind;
+		  at: 'source' put: from;
+		  at: 'sourceKind' put: fromKind;
 		  at: 'edgeType' put: type;
-		  at: 'toId' put: to;
-		  at: 'toKind' put: toKind;
-		  at: 'toName' put: toName;
-		  at: 'toCitation' put: (Dictionary new
-				   at: 'file' put: '/src/' , to , '.srw';
+		  at: 'target' put: to;
+		  at: 'targetKind' put: toKind;
+		  at: 'targetName' put: targetName;
+		  at: 'targetCitation' put: (Dictionary new
+				   at: 'file' put: '/src/' , to , '.txt';
 				   at: 'startLine' put: aLine;
 				   yourself);
 		  yourself
@@ -61,7 +63,7 @@ IsonGraphTest >> testInconsistentEndpointAttributesStayOnEdges [
 			         yourself).
 	self assert: (text includesSubstring: 'results:refs').
 	self deny: (text includesSubstring: 'refs+').
-	self assert: (text includesSubstring: 'toName')
+	self assert: (text includesSubstring: 'targetName')
 ]
 
 { #category : 'tests' }
@@ -139,7 +141,7 @@ IsonGraphTest >> testNodeRowsUseNodesBlocks [
 						          at: 'name' put: 'f2';
 						          yourself).
 					         (Dictionary new
-						          at: 'id' put: 'smtir://sql/table/t';
+						          at: 'id' put: 'scheme://table/t';
 						          at: 'kind' put: 'Table';
 						          at: 'name' put: 'T';
 						          yourself).
@@ -154,7 +156,7 @@ IsonGraphTest >> testNodeRowsUseNodesBlocks [
 	self assert: (text includesSubstring: 'nodes.Table').
 	"kind travels in the block name, not per row; readable ids are verbatim"
 	self deny: (text includesSubstring: ' kind').
-	self assert: (text includesSubstring: 'smtir://sql/table/t T').
+	self assert: (text includesSubstring: 'scheme://table/t T').
 	"rows inside a block are ordinal by id"
 	self assert: (text indexOfSubCollection: 'p.w.f1')
 		< (text indexOfSubCollection: 'p.w.f2')
@@ -163,7 +165,8 @@ IsonGraphTest >> testNodeRowsUseNodesBlocks [
 { #category : 'tests' }
 IsonGraphTest >> testNodeTableAndReferencesShareOneGraph [
 	"A document with its own node rows AND reference rows (the context-pack shape): edges point at the
-	 document's node rows, endpoint attributes stay on the edges, and no endpoint rows are invented."
+	 document's node rows, endpoint attributes stay on the edges, and no endpoint rows are invented.
+	 Uses the neutral edge-row contract (source/target/edgeType)."
 
 	| text |
 	text := self assertRoundTrip: (Dictionary new
@@ -179,12 +182,12 @@ IsonGraphTest >> testNodeTableAndReferencesShareOneGraph [
 						          at: 'name' put: 'B';
 						          yourself) };
 			         at: 'references' put: { (Dictionary new
-				          at: 'fromId' put: 'a';
-				          at: 'fromKind' put: 'Callable';
+				          at: 'source' put: 'a';
+				          at: 'sourceKind' put: 'Callable';
 				          at: 'edgeType' put: 'calls';
-				          at: 'toId' put: 'b';
-				          at: 'toKind' put: 'Callable';
-				          at: 'toName' put: 'B';
+				          at: 'target' put: 'b';
+				          at: 'targetKind' put: 'Callable';
+				          at: 'targetName' put: 'B';
 				          yourself) };
 			         yourself).
 	self assert: (text includesSubstring: 'nodes:nodes').
@@ -198,7 +201,7 @@ IsonGraphTest >> testNonObjectResultsAreWrapped [
 
 	| text |
 	text := self assertRoundTrip: #( 'a' 'b' ).
-	self assert: (text beginsWith: '# ir-ison 1 wrapped').
+	self assert: (text beginsWith: '# ison1 wrapped').
 	self assertRoundTrip: 42.
 	self assert: (IsonGraphReader new read:
 			 (IsonGraphWriter new documentFor: Dictionary new)) isNil
@@ -278,22 +281,24 @@ IsonGraphTest >> testReferenceRowsUseEdgeBlocksAndEndpointNodes [
 						          referenceRow: 'a'
 						          kind: 'Callable'
 						          type: 'writes'
-						          to: 'smtir://sql/table/t'
+						          to: 'scheme://table/t'
 						          kind: 'Table'
 						          name: 'T'
 						          line: 1) };
 			         yourself).
 	self assert:
-		(text includesSubstring: 'results:refs+toCitation+toName').
+		(text includesSubstring: 'results:refs+targetCitation+targetName').
 	self assert: (text includesSubstring: 'edges.calls').
 	self assert: (text includesSubstring: 'edges.writes').
 	self assert: (text includesSubstring: ':Callable:a :Callable:b').
 	self assert:
-		(text includesSubstring: ':Callable:a :Table:smtir://sql/table/t').
+		(text includesSubstring: ':Callable:a :Table:scheme://table/t').
 	"the shared target's name is written once, on its node row"
 	self assert: (text occurrencesOf: $e) > 0.
-	self assert:
-		(text lines select: [ :l | l includesSubstring: ' bee' ]) size = 1
+	self
+		assert:
+		(text lines select: [ :l | l includesSubstring: ' bee' ]) size
+		equals: 1
 ]
 
 { #category : 'tests' }
@@ -326,7 +331,7 @@ IsonGraphTest >> testScalarsNeedingQuotesRoundTrip [
 			         at: 'yes' put: true;
 			         at: 'no' put: false;
 			         yourself).
-	self assert: (text beginsWith: '# ir-ison 1').
+	self assert: (text beginsWith: '# ison1').
 	self assert: (text includesSubstring: 'meta.result')
 ]
 
@@ -336,7 +341,7 @@ IsonGraphTest >> testStrictGraphIdsEscapeWhatIsonGraphRejects [
 	| value readable strict |
 	value := Dictionary new
 		         at: 'results' put: { (Dictionary new
-				          at: 'id' put: 'egl://a/b|c d%e';
+				          at: 'id' put: 'scheme://a/b|c d%e';
 				          at: 'kind' put: 'Type';
 				          yourself) };
 		         yourself.
@@ -344,8 +349,8 @@ IsonGraphTest >> testStrictGraphIdsEscapeWhatIsonGraphRejects [
 	strict := IsonGraphWriter new
 		          strictGraphIds: true;
 		          documentFor: value.
-	self assert: (readable includesSubstring: 'egl://a/b|c%20d%25e').
-	self assert: (strict includesSubstring: 'egl%3A//a/b%7Cc%20d%25e').
+	self assert: (readable includesSubstring: 'scheme://a/b|c%20d%25e').
+	self assert: (strict includesSubstring: 'scheme%3A//a/b%7Cc%20d%25e').
 	self assert: (IsonGraphCodec
 			 equivalent: value
 			 to: (IsonGraphReader new read: readable)).

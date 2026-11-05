@@ -1,3 +1,6 @@
+"
+Represents one column of a block being WRITTEN: a field name, an optional type hint (e.g. 'list', 'tab', 'obj', 'json', 'file', 'nodes', 'refs'), and the ordered cell values. `fieldString` answers the header token (name, or name:hint). An internal building block of IsonGraphWriter.
+"
 Class {
 	#name : 'IsonGraphColumn',
 	#superclass : 'Object',

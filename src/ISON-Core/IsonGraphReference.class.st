@@ -1,3 +1,6 @@
+"
+Represents a node reference written in ISON as `:<kind>:<id>` (for example :person:1). Holds a kind and an id; `isonString` answers the serialized form. Equality and hashing are by kind and id, so references can be used as keys. Used in edges.<edgeType> blocks for the source and target cells.
+"
 Class {
 	#name : 'IsonGraphReference',
 	#superclass : 'Object',

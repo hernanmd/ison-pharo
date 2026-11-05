@@ -1,3 +1,13 @@
+"
+Holds the shared ISON value rules as class-side utilities (no instances are created). Covers:
+- scalar typing and recognition (isScalar:, isIsonInteger:, isIsonFloat:, looksLikeNumber:, isIdentifier:, isPlainKey:, looksLikeBlockHeader:);
+- quoting (needsQuote:singleColumn:, quote:, render:singleColumn:) so every value reads back as the same type;
+- normalization and structural equivalence (normalize:, equivalent:to:, equivalentNormalized:to:) — the definition of ISON losslessness, under which a nil-valued key equals an absent key, an all-nil object equals nil, Symbols equal Strings, and graph-laid object arrays compare as multisets;
+- canonical JSON helpers (canonicalJsonOf:, sortedKeysCopyOf:);
+- node-id percent-encoding (encodeGraphId:strict:, decodeGraphId:, isGraphIdEscaped:).
+
+Used by IsonGraphWriter, IsonGraphReader and the tests.
+"
 Class {
 	#name : 'IsonGraphCodec',
 	#superclass : 'Object',
@@ -35,8 +45,8 @@ IsonGraphCodec class >> decodeGraphId: aString [
 IsonGraphCodec class >> encodeGraphId: aString strict: aBoolean [
 	"Graph-block ids (nodes.<Kind> id column and :Kind:id references) are percent-encoded only where the
 	 layout needs it. Readable mode (default, for LLM context): whitespace/control and '%' only, so ids stay
-	 verbatim (`egl://a/b`). Strict mode (reference ISONGraph loadability): also ':' '|' quote backslash,
-	 because ISONGraph rejects those in node ids (`egl%3A//a/b`). The reader decodes both."
+	 verbatim (`scheme://a/b`). Strict mode (reference ISONGraph loadability): also ':' '|' quote backslash,
+	 because ISONGraph rejects those in node ids (`scheme%3A//a/b`). The reader decodes both."
 
 	| escaped |
 	escaped := aBoolean
@@ -60,7 +70,7 @@ IsonGraphCodec class >> encodeGraphId: aString strict: aBoolean [
 
 { #category : 'comparing' }
 IsonGraphCodec class >> equivalent: a to: b [
-	"Equality under the IR-ISON equivalence (see normalize:), with ONE relaxation: an array whose elements
+	"Equality under the ISON equivalence (see normalize:), with ONE relaxation: an array whose elements
 	 are all objects compares as a multiset, because graph-laid rows (nodes.<Kind> / edges.<type>) are
 	 regrouped by kind/type and sorted on the wire. Arrays of scalars compare positionally."
 
@@ -156,7 +166,7 @@ IsonGraphCodec class >> isNameCharacter: aCharacter [
 
 { #category : 'testing' }
 IsonGraphCodec class >> isPlainKey: aString [
-	"A key that can be written as an IR-ISON column name or as part of a child-block name / dotted
+	"A key that can be written as an ISON column name or as part of a child-block name / dotted
 	 flattened path. Reserved names (`r` parent index, `_` placeholder, `_x` extra-key bag) are not plain."
 
 	aString isString ifFalse: [ ^ false ].
@@ -256,7 +266,7 @@ IsonGraphCodec class >> needsQuote: aString singleColumn: aBoolean [
 
 { #category : 'normalizing' }
 IsonGraphCodec class >> normalize: anObject [
-	"The IR-ISON equivalence used by writer, reader and tests. JSON-semantics simplification, stated once:
+	"The ISON equivalence used by writer, reader and tests. JSON-semantics simplification, stated once:
 	 - a nil-valued key is the same as an absent key;
 	 - an object that has no non-nil entries is the same as nil (so `properties: {}` == absent);
 	 - Symbols are Strings, Fractions/ScaledDecimals are Floats, dictionary keys are Strings.

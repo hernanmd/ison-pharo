@@ -1,3 +1,6 @@
+"
+Represents one block being WRITTEN: a kind (e.g. 'meta', 'nodes', 'list', 'tab', 'edges'), a name, and an ordered collection of IsonGraphColumn. `renderOn:` emits the kind.name header line, the shared field line, then one line per row. An internal building block of IsonGraphWriter.
+"
 Class {
 	#name : 'IsonGraphBlock',
 	#superclass : 'Object',

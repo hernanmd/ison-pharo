@@ -1,3 +1,8 @@
+"
+Answers a cheap, dependency-free, deliberately conservative estimate of how many LLM tokens a string will cost, without a byte-pair-encoding vocabulary.
+
+Entry point (class side): `estimate:` counts letter runs as ceil(length / 9), digit runs as ceil(length / 3), every other non-blank character and every newline as 1, and spaces as free. Calibrated to never under-count on representative output, which is what a budget check needs. Used by IsonGraphContextPacker.
+"
 Class {
 	#name : 'IsonGraphTokenEstimator',
 	#superclass : 'Object',
@@ -9,7 +14,7 @@ Class {
 IsonGraphTokenEstimator class >> estimate: aString [
 	"Conservative o200k_base token estimate without a BPE vocabulary: letter runs cost ceil(len/9), digit
 	 runs ceil(len/3), every other non-blank character and every newline 1; spaces are free. Calibrated by
-	 .agents/tasks/isongraph-harness/calibrate_estimator.py on PB Northwind + EGL coa_firepermit IR-ISON
+	 a calibration harness on representative IsonGraph
 	 outputs: estimate/actual stayed within [1.07, 1.33] - it never under-counts on that corpus, so a
 	 budget computed with it is not exceeded."
 

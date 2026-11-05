@@ -1,3 +1,6 @@
+"
+Represents one block being READ: its kind, name, parsed field names, per-field type hints, and the decoded rows. Produced by IsonGraphReader while scanning a document and consulted when rebuilding the object.
+"
 Class {
 	#name : 'IsonGraphParsedBlock',
 	#superclass : 'Object',
