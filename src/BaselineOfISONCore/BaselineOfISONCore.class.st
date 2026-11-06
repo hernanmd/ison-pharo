@@ -13,7 +13,7 @@ BaselineOfISONCore >> baseline: spec [
 		do: [ 
 			spec 
 				package: 'ISON-Core';
-				package: 'ISON-Core-Tests'	with: [ spec requires: #(ISON-Core) ].
+				package: 'ISON-Core-Tests'	with: [ spec requires: #('ISON-Core') ].
 			spec 
 				group: 'Core' with: #('ISON-Core');
 				group: 'Tests' with: #('ISON-Core' 'ISON-Core-Tests');
